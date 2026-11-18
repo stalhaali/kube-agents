@@ -196,11 +196,14 @@ class GateAndReportingTests(unittest.TestCase):
         code, out = self.run_tick(lambda *a, **kw: completed_json(rep), now=T0)
         self.assertEqual(code, 0)
         self.assertIn(
-            "leeway: 2 finding(s) due (2 new finding) across 1 cluster(s) (p1/us-central1/seeded-d): "
-            "ComputeClass/balanced-spot [last-rank, 75%], Deployment/shop/checkout-api [constraint_ignored, 100%]",
+            "**2 pod placement problems on cluster seeded-d (all new)**\n"
+            "- checkout-api (shop) on seeded-d: 100% of its pods in one zone; its zone spread rule is not being kept\n"
+            "- compute class balanced-spot on seeded-d: running on its last machine choice too long "
+            "(last choice 75% of the time)\n",
             out,
         )
-        self.assertIn("next refresh after 2026-10-26", out)
+        self.assertIn("I'll post anything still open again after 2026-10-26.", out)
+        self.assertNotIn(str(self.home), out)
 
         # Verify report files and symlinks exist and contain required fields.
         latest_md = self.home / "reports" / "latest.md"
@@ -242,7 +245,7 @@ class GateAndReportingTests(unittest.TestCase):
         }
         code, out = self.run_tick(lambda *a, **kw: completed_json(make_report([c2], t1)), now=t1)
         self.assertEqual(code, 0)
-        self.assertIn("1 cause/severity change", out)
+        self.assertIn("**1 pod placement problem on cluster seeded-d (changed)**", out)
 
         # Day 2, severity escalates from warning to critical -> immediate report.
         t2 = T0 + timedelta(days=2)
@@ -253,7 +256,7 @@ class GateAndReportingTests(unittest.TestCase):
         }
         code3, out3 = self.run_tick(lambda *a, **kw: completed_json(make_report([c3], t2)), now=t2)
         self.assertEqual(code3, 0)
-        self.assertIn("1 cause/severity change", out3)
+        self.assertIn("**1 pod placement problem on cluster seeded-d (changed)**", out3)
 
         # Day 3, severity drops back to warning -> quiet tick, and baseline severity in ledger stays critical
         # so bouncing back to critical on Day 4 does NOT re-page inside the 7-day suppression window.
@@ -276,7 +279,7 @@ class GateAndReportingTests(unittest.TestCase):
         t_refresh = T0 + timedelta(days=7) - timedelta(minutes=5)
         code, out = self.run_tick(lambda *a, **kw: completed_json(make_report([c1], t_refresh)), now=t_refresh)
         self.assertEqual(code, 0)
-        self.assertIn("1 scheduled refresh", out)
+        self.assertIn("**1 pod placement problem on cluster seeded-d (still open)**", out)
 
     def test_resolved_finding_is_retired_on_ok_scan_and_retained_on_error_scan(self) -> None:
         c_skewed = {
@@ -315,7 +318,7 @@ class GateAndReportingTests(unittest.TestCase):
         code_ok, out_ok = self.run_tick(lambda *a, **kw: completed_json(make_report([c_clean], t3)), now=t3)
         self.assertEqual(code_ok, 0)
         self.assertIn("leeway watch: the fleet scan reads every target again", out_ok)
-        self.assertIn("leeway: 1 finding(s) resolved (seeded-d:shop/checkout-api); retired from the watch", out_ok)
+        self.assertIn("**1 pod placement problem has cleared**\n- checkout-api (shop) on seeded-d\n", out_ok)
         ledger_after = watch.load_ledger(self.home)
         self.assertEqual(ledger_after[watch.FINDINGS_KEY], {})
 
@@ -410,7 +413,7 @@ class GateAndReportingTests(unittest.TestCase):
             rep_clean = make_report([c_clean], t1)
             code2, out2 = self.run_tick(lambda *a, **kw: completed_json(rep_clean), now=t1)
             self.assertEqual(code2, 0)
-            self.assertIn("retired from the watch", out2)
+            self.assertIn("**1 pod placement problem has cleared**", out2)
             self.assertEqual(len(a2a_calls), 2)
             latest_json = json.loads((self.home / "reports" / "latest.json").read_text(encoding="utf-8"))
             self.assertEqual(latest_json["summary"]["topology_findings"], 0)
@@ -634,7 +637,7 @@ class GateAndReportingTests(unittest.TestCase):
                 lambda *a, **kw: completed_json(make_report([c_clean, c_other_err], t1)), now=t1
             )
             self.assertEqual(code, 0)
-            self.assertIn("retired from the watch", out)
+            self.assertIn("**1 pod placement problem has cleared**", out)
 
         # Verify an explicitly requested target omitted from `report.clusters` is retained (not retired).
         self.assertFalse(
@@ -762,9 +765,9 @@ class GateAndReportingTests(unittest.TestCase):
         )
         code, out = self.run_tick(lambda *a, **kw: completed_json(rep), now=T0)
         self.assertEqual(code, 0)
-        self.assertIn("2 finding(s) due", out)
-        self.assertIn("Deployment/finance/ledger-sync [selector_confined, 100%]", out)
-        self.assertIn("Deployment/shop/frontend-web [unknown, 100%]", out)
+        self.assertIn("**2 pod placement problems on cluster seeded-d (all new)**", out)
+        self.assertIn("ledger-sync (finance) on seeded-d: 100% of its pods in one zone; its node selector allows only one zone", out)
+        self.assertIn("frontend-web (shop) on seeded-d: 100% of its pods in one zone; no clear cause found", out)
         self.assertNotIn("metrics-server", out)
         self.assertNotIn("redis", out)
 
@@ -878,11 +881,15 @@ class GateAndReportingTests(unittest.TestCase):
         ):
             code, out = self.run_tick(lambda *a, **kw: completed_json(rep), now=T0)
         self.assertEqual(code, 0)
-        self.assertIn("4 finding(s) due", out)
-        self.assertIn("Domain/us-central1-c [taint_exclusion]", out)
-        self.assertIn("Deployment/shop/confined-app [selector_confined, 100%]", out)
-        self.assertIn("Deployment/shop/full-skew [constraint_ignored, 100%]", out)
-        self.assertIn("ComputeClass/gpu-spot [wedged, 0%]", out)
+        self.assertIn(
+            "**4 pod placement problems on cluster seeded-d (all new)**\n"
+            "- compute class gpu-spot on seeded-d: pods are stuck with no allowed machines to run on\n"
+            "- zone us-central1-c on seeded-d: it takes no new pods, every node is cordoned or tainted\n"
+            "- confined-app (shop) on seeded-d: 100% of its pods in one zone; its node selector allows only one zone\n"
+            "- and 1 more\n",
+            out,
+        )
+        self.assertEqual(len(watch.load_ledger(self.home)[watch.FINDINGS_KEY]), 4)
         self.assertNotIn("info-app", out)
         self.assertNotIn("low-drift", out)
         self.assertNotIn("mild-skew", out)
@@ -905,10 +912,10 @@ class GateAndReportingTests(unittest.TestCase):
         ):
             code, out = self.run_tick(lambda *a, **kw: completed_json(rep), now=T0)
         self.assertEqual(code, 0)
-        self.assertIn("8 finding(s) due (8 new finding) across 2 cluster(s)", out)
-        self.assertIn("alpha:Deployment/shop/svc-0 [constraint_ignored, 100%]", out)
-        self.assertIn("beta:Deployment/shop/api-0 [constraint_ignored, 100%]", out)
-        self.assertIn("+2 more", out)
+        self.assertIn("**8 pod placement problems on 2 clusters (all new)**", out)
+        self.assertIn("- svc-0 (shop) on alpha: 100% of its pods in one zone", out)
+        self.assertIn("- and 5 more\n", out)
+        self.assertNotIn("p1/us-central1/alpha", out)
 
     def test_blackboard_topic_publish_failure_warns_once_and_retries_on_quiet_tick(self) -> None:
         c_skewed = {
@@ -942,12 +949,12 @@ class GateAndReportingTests(unittest.TestCase):
             code0, out0 = self.run_tick(lambda *a, **kw: completed_json(rep), now=T0)
             self.assertEqual(code0, 0)
             lines0 = out0.strip().splitlines()
-            self.assertEqual(len(lines0), 2)
-            self.assertIn("leeway: 1 finding(s) due", lines0[0])
-            self.assertIn("publishing to blackboard topic topology-skew failed", lines0[1])
-            self.assertIn("Error: nats: no 'TOPICS-STATE' response", lines0[1])
-            self.assertIn("TopicsStateSubjectMissing", lines0[1])
-            self.assertIn("nats stream edit TOPICS-STATE", lines0[1])
+            self.assertEqual(len(lines0), 4)
+            self.assertIn("**1 pod placement problem on cluster seeded-d (new)**", lines0[0])
+            self.assertIn("publishing to blackboard topic topology-skew failed", lines0[3])
+            self.assertIn("Error: nats: no 'TOPICS-STATE' response", lines0[3])
+            self.assertIn("TopicsStateSubjectMissing", lines0[3])
+            self.assertIn("nats stream edit TOPICS-STATE", lines0[3])
             self.assertEqual(len(a2a_calls), 1)
 
             # Day 1: quiet tick retries latest.json and fails again -> no duplicate warning spam.
@@ -1035,7 +1042,7 @@ class GateAndReportingTests(unittest.TestCase):
             # Day 1: alpha's finding retires while beta fails to scan -> do NOT retry stale Day-0 latest.json.
             code1, out1 = self.run_tick(lambda *a, **kw: completed_json(rep_day1_partial), now=t1)
             self.assertEqual(code1, 0)
-            self.assertIn("1 finding(s) resolved", out1)
+            self.assertIn("**1 pod placement problem has cleared**", out1)
             self.assertIn("the fleet scan was partial (1 error(s))", out1)
             self.assertEqual(len(published_payloads), 1)
             ledger1 = watch.load_ledger(self.home)
@@ -1081,7 +1088,7 @@ class GateAndReportingTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {watch.MIN_EXCESS_OVER_FLOOR_ENV: "0"}, clear=False):
             code0, out0 = self.run_tick(lambda *a, **kw: completed_json(rep_both), now=T0)
         self.assertEqual(code0, 0)
-        self.assertIn("2 finding(s) due", out0)
+        self.assertIn("**2 pod placement problems on cluster seeded-d (all new)**", out0)
 
         # Day 1 (upgrade to default floor filter): floor_equal is suppressed by thresholds while still
         # emitted by leeway -> must NOT print a false "resolved" line and stays silently in ledger.json.
@@ -1114,7 +1121,7 @@ class GateAndReportingTests(unittest.TestCase):
         rep_empty = make_report([{"cluster": "p1/us-central1/seeded-d", "status": "ok", "topology_findings": []}], t4)
         code4, out4 = self.run_tick(lambda *a, **kw: completed_json(rep_empty), now=t4)
         self.assertEqual(code4, 0)
-        self.assertIn("2 finding(s) resolved", out4)
+        self.assertIn("**2 pod placement problems have cleared**", out4)
         self.assertEqual(watch.load_ledger(self.home)[watch.FINDINGS_KEY], {})
 
     def test_due_finding_clears_deferred_report_refresh_marker(self) -> None:
@@ -1219,7 +1226,7 @@ class GateAndReportingTests(unittest.TestCase):
             warn_line = [ln for ln in out0.splitlines() if "publishing to blackboard topic" in ln][0]
             self.assertNotIn("--text", warn_line)
             self.assertNotIn("--data", warn_line)
-            self.assertNotIn("finding(s) due", warn_line)
+            self.assertNotIn("pod placement problem", warn_line)
 
             t1 = T0 + timedelta(days=1)
             code1, out1 = self.run_tick(lambda *a, **kw: completed_json(rep), now=t1)
@@ -1268,9 +1275,9 @@ class GateAndReportingTests(unittest.TestCase):
         )
         code, out = self.run_tick(lambda *a, **kw: completed_json(rep), now=T0)
         self.assertEqual(code, 0)
-        self.assertIn("2 finding(s) due", out)
-        self.assertIn("Deployment/shop/legacy-api [unknown, 100%]", out)
-        self.assertIn("ComputeClass/novel-class [last-rank, 75%]", out)
+        self.assertIn("**2 pod placement problems on cluster seeded-d (all new)**", out)
+        self.assertIn("legacy-api (shop) on seeded-d: 100% of its pods in one zone; no clear cause found", out)
+        self.assertIn("compute class novel-class on seeded-d: running on its last machine choice too long", out)
 
         # Even when non-zero drift/share/excess floors are active, a finding that omits
         # score and replica/domain counts (`has_drift=False, has_max_domain_share=False, excess_over_floor=None`)
@@ -1334,13 +1341,13 @@ class GateAndReportingTests(unittest.TestCase):
         rep0 = make_report([{"cluster": "p1/us-central1/ap-mcp", "status": "ok", "topology_findings": [stacked]}], T0)
         code0, out0 = self.run_tick(lambda *a, **kw: completed_json(rep0), now=T0)
         self.assertEqual(code0, 0)
-        self.assertIn("Deployment/kube-system/kube-dns [unknown, 100%]", out0)
+        self.assertIn("kube-dns (kube-system) on ap-mcp: 100% of its pods in one zone; no clear cause found", out0)
 
         t1 = T0 + timedelta(days=1)
         rep1 = make_report([{"cluster": "p1/us-central1/ap-mcp", "status": "ok", "topology_findings": [rebalanced]}], t1)
         code1, out1 = self.run_tick(lambda *a, **kw: completed_json(rep1), now=t1)
         self.assertEqual(code1, 0)
-        self.assertIn("1 finding(s) resolved (ap-mcp:kube-system/kube-dns)", out1)
+        self.assertIn("**1 pod placement problem has cleared**\n- kube-dns (kube-system) on ap-mcp", out1)
         self.assertEqual(watch.load_ledger(self.home)[watch.FINDINGS_KEY], {})
         latest1 = json.loads((self.home / watch.REPORTS_DIR_NAME / watch.LATEST_JSON_LINK_NAME).read_text())
         self.assertEqual(latest1["summary"]["topology_findings"], 0)
@@ -1349,8 +1356,8 @@ class GateAndReportingTests(unittest.TestCase):
         rep2 = make_report([{"cluster": "p1/us-central1/ap-mcp", "status": "ok", "topology_findings": [stacked]}], t2)
         code2, out2 = self.run_tick(lambda *a, **kw: completed_json(rep2), now=t2)
         self.assertEqual(code2, 0)
-        self.assertIn("1 finding(s) due (1 new finding)", out2)
-        self.assertIn("Deployment/kube-system/kube-dns [unknown, 100%]", out2)
+        self.assertIn("**1 pod placement problem on cluster ap-mcp (new)**", out2)
+        self.assertIn("kube-dns (kube-system) on ap-mcp: 100% of its pods in one zone; no clear cause found", out2)
 
         # Pre-existing ledger fallback: strip `excess_over_floor` from the ledger entry (matching
         # the pre-upgrade ledger schema that stored only `observed_skew: 2`) and confirm rebalancing
@@ -1364,7 +1371,7 @@ class GateAndReportingTests(unittest.TestCase):
         rep3 = make_report([{"cluster": "p1/us-central1/ap-mcp", "status": "ok", "topology_findings": [rebalanced]}], t3)
         code3, out3 = self.run_tick(lambda *a, **kw: completed_json(rep3), now=t3)
         self.assertEqual(code3, 0)
-        self.assertIn("1 finding(s) resolved (ap-mcp:kube-system/kube-dns)", out3)
+        self.assertIn("**1 pod placement problem has cleared**\n- kube-dns (kube-system) on ap-mcp", out3)
         self.assertEqual(watch.load_ledger(self.home)[watch.FINDINGS_KEY], {})
 
         # Non-`unknown` cause (`prior_cause != "unknown"`) at `observedSkew == minAchievableSkew == 1`
@@ -1378,13 +1385,13 @@ class GateAndReportingTests(unittest.TestCase):
         )
         code4, out4 = self.run_tick(lambda *a, **kw: completed_json(rep4), now=t4)
         self.assertEqual(code4, 0)
-        self.assertIn("Deployment/kube-system/kube-dns [constraint_ignored, 50%]", out4)
+        self.assertIn("kube-dns (kube-system) on ap-mcp: 50% of its pods in one zone; its zone spread rule is not being kept", out4)
 
         t5 = T0 + timedelta(days=5)
         rep5 = make_report([{"cluster": "p1/us-central1/ap-mcp", "status": "ok", "topology_findings": [rebalanced]}], t5)
         code5, out5 = self.run_tick(lambda *a, **kw: completed_json(rep5), now=t5)
         self.assertEqual(code5, 0)
-        self.assertIn("1 finding(s) resolved (ap-mcp:kube-system/kube-dns)", out5)
+        self.assertIn("**1 pod placement problem has cleared**\n- kube-dns (kube-system) on ap-mcp", out5)
         self.assertEqual(watch.load_ledger(self.home)[watch.FINDINGS_KEY], {})
 
     def test_non_dry_run_threshold_override_report_refreshes_on_next_default_tick(self) -> None:
@@ -1430,6 +1437,152 @@ class GateAndReportingTests(unittest.TestCase):
             self.assertEqual(latest_restored["summary"]["topology_findings"], 2)
             self.assertEqual(len(a2a_calls), 3)
             self.assertNotIn(watch.ANNOUNCED_KEY, watch.load_ledger(self.home))
+
+    def test_chat_names_no_pod_path_no_triple_and_no_cause_code(self) -> None:
+        """The due message carries no report path on the pod, no project/location
+        triple and no leeway cause code; the report is still written there."""
+        rep = make_report(
+            [{"cluster": "p1/us-central1/seeded-d", "status": "ok", "topology_findings": [make_topology_finding()]}],
+            T0,
+        )
+        code, out = self.run_tick(lambda *a, **kw: completed_json(rep), now=T0)
+        self.assertEqual(code, 0)
+        self.assertTrue((self.home / watch.REPORTS_DIR_NAME / watch.LATEST_MD_LINK_NAME).is_file())
+        for plumbing in (str(self.home), watch.REPORTS_DIR_NAME + "/", watch.REPORT_MARKDOWN_SUFFIX,
+                         "p1/us-central1", "constraint_ignored", "seeded-d:shop", "shop/checkout-api", "leeway", "finding"):
+            self.assertNotIn(plumbing, out)
+
+
+def chat_item(
+    name: str = "checkout-api",
+    namespace: str = "shop",
+    cluster: str = "p1/us-central1/prod-east",
+    kind: str = "leeway.placement_drift",
+    subject_kind: str = "Deployment",
+    cause: str = "constraint_ignored",
+    share: float = 1.0,
+    severity: str = "warning",
+) -> dict:
+    return {
+        "key": "/".join([cluster, namespace, subject_kind, name, kind]),
+        "cluster": cluster,
+        "namespace": namespace,
+        "kind": kind,
+        "subject_kind": subject_kind,
+        "subject_name": name,
+        "suspected_cause": cause,
+        "max_domain_share": share,
+        "severity": severity,
+    }
+
+
+class ChatMessageTests(unittest.TestCase):
+    """The due and resolved chat messages (#6255): headline first, plain items, bounded."""
+
+    NEXT = "2026-11-25"
+
+    def test_headline_is_the_first_line_bold_and_answers(self) -> None:
+        message = watch.due_message([chat_item()], [watch.REASON_NEW], self.NEXT)
+        lines = message.splitlines()
+        self.assertEqual(lines[0], "**1 pod placement problem on cluster prod-east (new)**")
+        self.assertEqual(
+            lines[1],
+            "- checkout-api (shop) on prod-east: 100% of its pods in one zone; its zone spread rule is not being kept",
+        )
+        self.assertEqual(lines[2], "Ask me for the causes and fixes. I'll post anything still open again after 2026-11-25.")
+        self.assertEqual(len(lines), 3)
+
+    def test_plural_wording_counts_clusters_and_breaks_down_reasons(self) -> None:
+        items = [
+            chat_item(name="a"),
+            chat_item(name="b", cluster="p2/us-east1/prod-west"),
+            chat_item(name="c", cluster="p2/us-east1/prod-west"),
+        ]
+        reasons = [watch.REASON_REFRESH, watch.REASON_NEW, watch.REASON_NEW]
+        self.assertEqual(
+            watch.due_message(items, reasons, self.NEXT).splitlines()[0],
+            "**3 pod placement problems on 2 clusters (2 new, 1 still open)**",
+        )
+        self.assertEqual(
+            watch.due_message(items, [watch.REASON_CHANGED] * 3, self.NEXT).splitlines()[0],
+            "**3 pod placement problems on 2 clusters (all changed)**",
+        )
+        self.assertEqual(watch.resolved_message(["x on c"]).splitlines()[0], "**1 pod placement problem has cleared**")
+        self.assertEqual(
+            watch.resolved_message(["x on c", "y on c"]).splitlines()[0], "**2 pod placement problems have cleared**"
+        )
+
+    def test_items_stop_at_the_cap_and_say_how_many_more(self) -> None:
+        cap = watch.MAX_CHAT_ITEMS
+        items = [chat_item(name=f"svc-{i}") for i in range(cap + 2)]
+        lines = watch.due_message(items, [watch.REASON_NEW] * len(items), self.NEXT).splitlines()
+        self.assertEqual(sum(1 for ln in lines if ln.startswith("- svc-")), cap)
+        self.assertIn("- and 2 more", lines)
+        exact = watch.due_message(items[:cap], [watch.REASON_NEW] * cap, self.NEXT)
+        self.assertNotIn("more", exact)
+        resolved = watch.resolved_message([f"svc-{i} (shop) on prod-east" for i in range(cap + 4)]).splitlines()
+        self.assertEqual(len(resolved), 1 + cap + 1)
+        self.assertEqual(resolved[-1], "- and 4 more")
+
+    def test_many_long_items_stay_bounded(self) -> None:
+        long = "x" * 250
+        items = [chat_item(name=f"{long}-{i}", namespace=long, cluster=f"p/l/{long}-{i % 7}") for i in range(200)]
+        single = [chat_item(name=long, namespace=long, cluster=f"p/l/{long}")]
+        bound = 2 * watch.CHAT_ITEM_MAX_CHARS + (watch.MAX_CHAT_ITEMS + 1) * (watch.CHAT_ITEM_MAX_CHARS + 2)
+        for due in (items, single):
+            message = watch.due_message(due, [watch.REASON_NEW] * len(due), self.NEXT)
+            self.assertLessEqual(len(message), bound)
+            for line in message.splitlines():
+                self.assertLessEqual(len(line), watch.CHAT_ITEM_MAX_CHARS + len("- "))
+        resolved = watch.resolved_message([watch.short_finding_label(i) for i in items])
+        self.assertLessEqual(len(resolved), bound)
+
+    def test_cause_codes_become_plain_phrases_and_an_unknown_code_falls_back(self) -> None:
+        for code, phrase in watch.CAUSE_PHRASES.items():
+            text = watch.due_chat_item(chat_item(cause=code))
+            self.assertIn(phrase, text)
+            self.assertNotIn(code, text.replace(phrase, ""))
+        novel = watch.due_chat_item(chat_item(cause="novel_cause_v2"))
+        self.assertIn(watch.CAUSE_PHRASE_FALLBACK, novel)
+        self.assertNotIn("novel_cause_v2", novel)
+        self.assertIn(watch.CAUSE_PHRASES[watch.DEFAULT_UNKNOWN], watch.due_chat_item(chat_item(cause="")))
+
+    def test_zone_compute_class_and_cluster_wide_items_read_plainly(self) -> None:
+        zone = chat_item(
+            name="us-central1-c", namespace="_cluster", kind=watch.FINDING_KIND_DOMAIN_UNAVAILABLE,
+            subject_kind="Domain", cause="taint_exclusion", share=0.0,
+        )
+        self.assertEqual(
+            watch.due_chat_item(zone),
+            "zone us-central1-c on prod-east: it takes no new pods, every node is cordoned or tainted",
+        )
+        rank = chat_item(name="gold", namespace="_cluster", kind="leeway.rank_degraded",
+                         subject_kind="ComputeClass", cause="last-rank", share=0.75)
+        self.assertEqual(
+            watch.due_chat_item(rank),
+            "compute class gold on prod-east: running on its last machine choice too long (last choice 75% of the time)",
+        )
+        wedged = dict(rank, kind="leeway.rank_wedged", suspected_cause="wedged", max_domain_share=0.0)
+        self.assertEqual(
+            watch.due_chat_item(wedged), "compute class gold on prod-east: pods are stuck with no allowed machines to run on"
+        )
+        pool = chat_item(name="pool-a", namespace="_cluster", subject_kind="NodeGroup", cause="unknown", share=0.5)
+        self.assertEqual(watch.due_chat_item(pool), "pool-a on prod-east: 50% in one zone; no clear cause found")
+        self.assertEqual(watch.short_finding_label(zone), "zone us-central1-c on prod-east")
+
+    def test_most_severe_then_unusable_zone_then_most_concentrated_first(self) -> None:
+        items = [
+            chat_item(name="half", share=0.5),
+            chat_item(name="full", share=1.0),
+            chat_item(name="us-a", namespace="_cluster", kind=watch.FINDING_KIND_DOMAIN_UNAVAILABLE,
+                      subject_kind="Domain", cause="domain_outage", share=0.0),
+            chat_item(name="hard", share=0.6, severity="critical"),
+        ]
+        lines = watch.due_message(items, [watch.REASON_NEW] * len(items), self.NEXT).splitlines()
+        self.assertTrue(lines[1].startswith("- hard (shop)"), lines)
+        self.assertTrue(lines[2].startswith("- zone us-a"), lines)
+        self.assertTrue(lines[3].startswith("- full (shop)"), lines)
+        self.assertEqual(lines[4], "- and 1 more")
 
 
 class DiscoveryTests(unittest.TestCase):

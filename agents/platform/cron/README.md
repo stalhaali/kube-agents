@@ -465,13 +465,20 @@ key and kind; its ComputeClass rank findings (`leeway.rank_wedged`,
 `leeway.rank_degraded`, `leeway.rank_no_migration`, `leeway.rank_tier_unused`)
 by cluster, class, judging rule and kind. A finding earns a report under
 `<profile home>/leeway/reports/` (`<timestamp>.md` and `<timestamp>.json`, with
-`latest.md` and `latest.json` symlinks) and a chat summary line naming up to
-six due subjects with their cause and share when it first appears, when its
-`suspectedCause` (a rank finding's `rule`) changes or its `severity` escalates,
-or when its 7-day refresh window (`LEEWAY_WATCH_REFRESH_DAYS`, with ten minutes
-of slack) comes round. Resolved findings on cleanly scanned (`status: "ok"`)
-clusters are retired with a single resolution line (and a clean `latest.*`
-refresh once all clusters scan cleanly), while clusters whose scan failed
+`latest.md` and `latest.json` symlinks) and a place in one chat message when
+it first appears, when its `suspectedCause` (a rank finding's `rule`) changes
+or its `severity` escalates, or when its 7-day refresh window
+(`LEEWAY_WATCH_REFRESH_DAYS`, with ten minutes of slack) comes round. The
+message opens with a bold headline ("**2 pod placement problems on 2 clusters
+(1 new, 1 still open)**"), names up to three of them, most severe first, by
+workload, zone or compute class and cluster, with the share in one zone and
+leeway's cause in plain words (`CAUSE_PHRASES` in the script), adds "and N
+more" past that, and ends by pointing at the agent for causes and fixes and
+with the date an open finding is next posted. The report's path on the pod is
+left out, since a chat reader cannot open it. Resolved findings on cleanly
+scanned (`status: "ok"`) clusters are retired with one message of the same
+shape ("**1 pod placement problem has cleared**", then up to three names), and
+a clean `latest.*` refresh once all clusters scan cleanly, while clusters whose scan failed
 retain their ledger entries so transient errors do not erase state and re-page
 tomorrow. When `NATS_URL` is set, the watch also writes `latest.json` to the
 `topology-skew` (`a2a.topics.agent.platform.topology-skew`) blackboard topic;
